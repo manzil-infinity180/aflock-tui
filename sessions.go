@@ -20,6 +20,18 @@ type SessionInfo struct {
 	FileCount   int
 	AttestCount int
 	HasJWT      bool
+	// Preview cache (lazy loaded)
+	Preview *SessionPreview
+}
+
+// SessionPreview is a lightweight summary for the session list preview bar.
+type SessionPreview struct {
+	PolicyName string
+	ToolCalls  int
+	AllowCount int
+	DenyCount  int
+	CostUSD    float64
+	Tools      map[string]int
 }
 
 // SessionState is the parsed state.json.
@@ -207,6 +219,34 @@ func loadSessions() ([]SessionInfo, error) {
 	})
 
 	return sessions, nil
+}
+
+func loadSessionPreview(sessionDir string) *SessionPreview {
+	data, err := os.ReadFile(filepath.Join(sessionDir, "state.json"))
+	if err != nil {
+		return nil
+	}
+	var state SessionState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil
+	}
+	p := &SessionPreview{}
+	if state.Policy != nil {
+		p.PolicyName = state.Policy.Name
+	}
+	if state.Metrics != nil {
+		p.ToolCalls = state.Metrics.ToolCalls
+		p.CostUSD = state.Metrics.CostUSD
+		p.Tools = state.Metrics.Tools
+	}
+	for _, a := range state.Actions {
+		if a.Decision == "allow" {
+			p.AllowCount++
+		} else {
+			p.DenyCount++
+		}
+	}
+	return p
 }
 
 func loadSessionState(sessionDir string) (*SessionState, error) {

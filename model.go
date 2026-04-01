@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,11 +16,11 @@ import (
 type view int
 
 const (
-	viewList        view = iota // session list
-	viewDetail                  // session detail (state.json inspect)
-	viewAttest                  // attestation list
-	viewAttestDetail            // single attestation detail with tabs
-	viewJWT                     // decoded JWT
+	viewList        view = iota
+	viewDetail
+	viewAttest
+	viewAttestDetail
+	viewJWT
 )
 
 type detailTab int
@@ -28,7 +30,7 @@ const (
 	tabActions
 	tabPolicy
 	tabState
-	tabCount // sentinel for wrapping
+	tabCount
 )
 
 type attestTab int
@@ -42,25 +44,37 @@ const (
 
 type model struct {
 	sessions     []SessionInfo
+	filtered     []int // indices into sessions matching filter
 	state        *SessionState
 	attestations []AttestationInfo
 	err          error
-	copied       string // flash message for copy
+	copied       string
 
 	view      view
 	detailTab detailTab
 	attestTab attestTab
-	cursor    int // session list cursor
-	attCursor int // attestation list cursor
-	scroll    int // scroll offset for list
+	cursor    int
+	attCursor int
+	scroll    int
 	viewport  viewport.Model
 	width     int
 	height    int
 	ready     bool
+
+	// Filter
+	filtering   bool
+	filterInput textinput.Model
+	filterText  string
+
+	// Delete confirmation
+	confirmDelete bool
 }
 
 func newModel() model {
-	return model{view: viewList}
+	ti := textinput.New()
+	ti.Placeholder = "filter sessions..."
+	ti.CharLimit = 60
+	return model{view: viewList, filterInput: ti}
 }
 
 type sessionsLoaded struct {
@@ -79,11 +93,61 @@ func (m model) Init() tea.Cmd {
 	return loadSessionsCmd
 }
 
+// visibleSessions returns the sessions matching the current filter.
+func (m *model) visibleSessions() []SessionInfo {
+	if len(m.filtered) == 0 && m.filterText == "" {
+		return m.sessions
+	}
+	result := make([]SessionInfo, len(m.filtered))
+	for i, idx := range m.filtered {
+		result[i] = m.sessions[idx]
+	}
+	return result
+}
+
+func (m *model) applyFilter() {
+	m.filtered = nil
+	if m.filterText == "" {
+		// Show all
+		for i := range m.sessions {
+			m.filtered = append(m.filtered, i)
+		}
+	} else {
+		q := strings.ToLower(m.filterText)
+		for i, s := range m.sessions {
+			// Match against ID, policy name from preview, date
+			searchable := strings.ToLower(s.ID + " " + s.ModTime.Format("02 Jan 15:04"))
+			if s.Preview != nil {
+				searchable += " " + strings.ToLower(s.Preview.PolicyName)
+			}
+			if strings.Contains(searchable, q) {
+				m.filtered = append(m.filtered, i)
+			}
+		}
+	}
+	m.cursor = 0
+	m.scroll = 0
+}
+
+func (m *model) currentSession() *SessionInfo {
+	vis := m.visibleSessions()
+	if m.cursor < len(vis) {
+		s := vis[m.cursor]
+		return &s
+	}
+	return nil
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case sessionsLoaded:
 		m.sessions = msg.sessions
 		m.err = msg.err
+		// Lazy-load previews
+		for i := range m.sessions {
+			m.sessions[i].Preview = loadSessionPreview(m.sessions[i].Dir)
+		}
+		m.applyFilter()
 		return m, nil
 
 	case clearCopied:
@@ -105,7 +169,50 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		m.copied = "" // clear flash on any key
+		m.copied = ""
+
+		// If in filter mode, handle text input
+		if m.filtering {
+			switch msg.String() {
+			case "enter":
+				// Keep filter, exit filter mode
+				m.filtering = false
+				m.filterInput.Blur()
+				return m, nil
+			case "esc":
+				// Clear filter and exit
+				m.filtering = false
+				m.filterInput.Blur()
+				m.filterText = ""
+				m.filterInput.SetValue("")
+				m.applyFilter()
+				return m, nil
+			case "up", "down":
+				// Exit filter mode and navigate
+				m.filtering = false
+				m.filterInput.Blur()
+				// Fall through to normal key handling below
+			default:
+				var cmd tea.Cmd
+				m.filterInput, cmd = m.filterInput.Update(msg)
+				m.filterText = m.filterInput.Value()
+				m.applyFilter()
+				return m, cmd
+			}
+		}
+
+		// If confirming delete
+		if m.confirmDelete {
+			switch msg.String() {
+			case "y", "Y":
+				m.doDelete()
+				m.confirmDelete = false
+				return m, loadSessionsCmd
+			default:
+				m.confirmDelete = false
+			}
+			return m, nil
+		}
 
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -118,6 +225,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "esc":
 			switch m.view {
+			case viewList:
+				if m.filterText != "" {
+					m.filterText = ""
+					m.filterInput.SetValue("")
+					m.applyFilter()
+					return m, nil
+				}
 			case viewDetail, viewJWT:
 				m.view = viewList
 			case viewAttest:
@@ -208,6 +322,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "p":
 			return m.handleCopyPath()
+
+		case "/":
+			if m.view == viewList {
+				m.filtering = true
+				m.filterInput.Focus()
+				return m, textinput.Blink
+			}
+			return m, nil
+
+		case "d":
+			if m.view == viewList {
+				s := m.currentSession()
+				if s != nil {
+					m.confirmDelete = true
+				}
+			}
+			return m, nil
+
+		case "o":
+			return m.handleOpen(false)
+
+		case "O":
+			return m.handleOpen(true)
 		}
 
 		// Forward to viewport for scrolling
@@ -240,9 +377,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.MouseButtonWheelDown:
 			switch m.view {
 			case viewList:
-				if m.cursor < len(m.sessions)-1 {
+				vis := m.visibleSessions()
+				if m.cursor < len(vis)-1 {
 					m.cursor++
-					maxVisible := m.height - 6
+					maxVisible := m.height - 9
 					if maxVisible < 1 {
 						maxVisible = 10
 					}
@@ -269,17 +407,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) handleEnter() (tea.Model, tea.Cmd) {
 	switch m.view {
 	case viewList:
-		if len(m.sessions) == 0 {
+		s := m.currentSession()
+		if s == nil {
 			return m, nil
 		}
-		session := m.sessions[m.cursor]
-		state, err := loadSessionState(session.Dir)
+		state, err := loadSessionState(s.Dir)
 		if err != nil {
 			m.err = err
 			return m, nil
 		}
 		m.state = state
-		attestations, _ := loadAttestations(session.Dir)
+		attestations, _ := loadAttestations(s.Dir)
 		m.attestations = attestations
 		m.view = viewDetail
 		m.detailTab = tabInspect
@@ -320,9 +458,10 @@ func (m *model) handleUp() (tea.Model, tea.Cmd) {
 func (m *model) handleDown() (tea.Model, tea.Cmd) {
 	switch m.view {
 	case viewList:
-		if m.cursor < len(m.sessions)-1 {
+		vis := m.visibleSessions()
+		if m.cursor < len(vis)-1 {
 			m.cursor++
-			maxVisible := m.height - 6
+			maxVisible := m.height - 9
 			if maxVisible < 1 {
 				maxVisible = 10
 			}
@@ -393,29 +532,66 @@ func (m *model) handleCopyPath() (tea.Model, tea.Cmd) {
 	var path string
 
 	switch m.view {
+	case viewList:
+		if s := m.currentSession(); s != nil {
+			path = s.Dir
+		}
 	case viewDetail:
-		// Copy the session directory path (state.json location)
-		if m.cursor < len(m.sessions) {
-			path = m.sessions[m.cursor].Dir + "/state.json"
+		if s := m.currentSession(); s != nil {
+			path = s.Dir + "/state.json"
 		}
 	case viewAttest:
-		// Copy the selected attestation file path
 		if m.attCursor < len(m.attestations) {
 			path = m.attestations[m.attCursor].Path
 		}
 	case viewAttestDetail:
-		// Copy the current attestation file path
 		if m.attCursor < len(m.attestations) {
 			path = m.attestations[m.attCursor].Path
 		}
 	case viewJWT:
-		// Copy the state.json path (JWT lives there)
-		if m.cursor < len(m.sessions) {
-			path = m.sessions[m.cursor].Dir + "/state.json"
+		if s := m.currentSession(); s != nil {
+			path = s.Dir + "/state.json"
 		}
 	}
 
 	return m.copyToClipboard(path, "path")
+}
+
+func (m *model) handleOpen(finder bool) (tea.Model, tea.Cmd) {
+	var dir string
+
+	switch m.view {
+	case viewList, viewDetail:
+		if s := m.currentSession(); s != nil {
+			dir = s.Dir
+		}
+	case viewAttest, viewAttestDetail:
+		if s := m.currentSession(); s != nil {
+			dir = s.Dir + "/attestations"
+		}
+	}
+
+	if dir == "" {
+		return m, nil
+	}
+
+	if finder {
+		// Open in Finder
+		exec.Command("open", dir).Start()
+		m.copied = "opened in Finder"
+	} else {
+		// Copy cd command to clipboard
+		return m.copyToClipboard("cd "+dir, "cd command")
+	}
+	return m, nil
+}
+
+func (m *model) doDelete() {
+	s := m.currentSession()
+	if s == nil {
+		return
+	}
+	os.RemoveAll(s.Dir)
 }
 
 func (m *model) updateViewport() {
@@ -514,6 +690,17 @@ var (
 			Bold(true).
 			Padding(0, 1)
 
+	previewBarStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#bbb")).
+			Background(lipgloss.Color("#111")).
+			Padding(0, 1)
+
+	confirmStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#fff")).
+			Background(lipgloss.Color("#FF5555")).
+			Bold(true).
+			Padding(0, 1)
+
 	// JSON syntax colors
 	jsonKeyStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#00BFFF"))
 	jsonStrStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#98C379"))
@@ -563,7 +750,6 @@ func (m model) renderHeader() string {
 
 	left := titleStyle.Render(title)
 
-	// Policy name badge
 	policyBadge := ""
 	if m.view == viewDetail && m.state != nil && m.state.Policy != nil {
 		policyBadge = "  " + subtitleStyle.Render(m.state.Policy.Name)
@@ -577,11 +763,11 @@ func (m model) renderFooter() string {
 
 	switch m.view {
 	case viewDetail:
-		parts = append(parts, "</>:tabs", "a:attestations", "t:jwt", "c:copy", "p:path", "esc:back")
+		parts = append(parts, "</>:tabs", "a:attestations", "t:jwt", "c:copy", "p:path", "o:cd", "esc:back")
 	case viewAttest:
 		parts = append(parts, "j/k:select", "enter:open", "p:path", "esc:back")
 	case viewAttestDetail:
-		parts = append(parts, "</>:tabs", "c:copy", "p:path", "j/k:scroll", "esc:back")
+		parts = append(parts, "</>:tabs", "c:copy", "p:path", "o:cd", "j/k:scroll", "esc:back")
 	case viewJWT:
 		parts = append(parts, "c:copy", "p:path", "j/k:scroll", "esc:back")
 	}
@@ -599,8 +785,12 @@ func (m model) renderSessionList() string {
 	var b strings.Builder
 
 	left := titleStyle.Render(" aflock sessions ")
-	count := dimStyle.Render(fmt.Sprintf(" %d sessions", len(m.sessions)))
-	b.WriteString(left + count + "\n")
+	vis := m.visibleSessions()
+	countText := fmt.Sprintf(" %d sessions", len(vis))
+	if m.filterText != "" {
+		countText += fmt.Sprintf(" (filtered: %q)", m.filterText)
+	}
+	b.WriteString(left + dimStyle.Render(countText) + "\n")
 
 	hdr := fmt.Sprintf("  %-6s  %-16s  %-50s  %5s  %3s  %s",
 		"SIZE", "MODIFIED", "SESSION", "FILES", "ATT", "JWT")
@@ -611,19 +801,24 @@ func (m model) renderSessionList() string {
 	}
 	b.WriteString(dimStyle.Render("  "+strings.Repeat("─", lineW)) + "\n")
 
-	if len(m.sessions) == 0 {
-		b.WriteString("\n  No sessions found in ~/.aflock/sessions/\n")
-		b.WriteString(dimStyle.Render("\n  Run Claude Code with an .aflock policy to create sessions."))
+	if len(vis) == 0 {
+		if m.filterText != "" {
+			b.WriteString("\n  No sessions match filter\n")
+		} else {
+			b.WriteString("\n  No sessions found in ~/.aflock/sessions/\n")
+		}
+		b.WriteString("\n")
+		b.WriteString(m.renderListFooter())
 		return b.String()
 	}
 
-	maxVisible := m.height - 5
+	maxVisible := m.height - 9
 	if maxVisible < 1 {
 		maxVisible = 10
 	}
 
-	for i := m.scroll; i < len(m.sessions) && i < m.scroll+maxVisible; i++ {
-		s := m.sessions[i]
+	for i := m.scroll; i < len(vis) && i < m.scroll+maxVisible; i++ {
+		s := vis[i]
 
 		jwt := dimStyle.Render("--")
 		if s.HasJWT {
@@ -650,9 +845,71 @@ func (m model) renderSessionList() string {
 		}
 	}
 
+	// Preview bar
 	b.WriteString("\n")
-	b.WriteString(statusBarStyle.Render(" enter:inspect  r:refresh  j/k:navigate  q:quit"))
+	b.WriteString(dimStyle.Render("  "+strings.Repeat("─", lineW)) + "\n")
+	b.WriteString(m.renderPreview(vis))
+	b.WriteString("\n")
+
+	// Filter input or footer
+	if m.filtering {
+		b.WriteString("  " + m.filterInput.View() + "\n")
+	} else if m.confirmDelete {
+		s := m.currentSession()
+		name := ""
+		if s != nil {
+			name = s.ID
+		}
+		b.WriteString(confirmStyle.Render(fmt.Sprintf(" Delete session %s? (y/N) ", truncate(name, 40))) + "\n")
+	} else {
+		b.WriteString(m.renderListFooter())
+	}
+
+	if m.copied != "" {
+		b.WriteString(copiedStyle.Render(" "+m.copied+" ") + "\n")
+	}
+
 	return b.String()
+}
+
+func (m model) renderPreview(vis []SessionInfo) string {
+	if m.cursor >= len(vis) {
+		return ""
+	}
+	s := vis[m.cursor]
+	p := s.Preview
+	if p == nil {
+		return previewBarStyle.Render("  " + dimStyle.Render("(no state.json)"))
+	}
+
+	var parts []string
+
+	if p.PolicyName != "" {
+		parts = append(parts, subtitleStyle.Render(p.PolicyName))
+	}
+	parts = append(parts, dimStyle.Render(fmt.Sprintf("%d calls", p.ToolCalls)))
+
+	if p.AllowCount > 0 || p.DenyCount > 0 {
+		parts = append(parts,
+			greenStyle.Render(fmt.Sprintf("%d allow", p.AllowCount)),
+			redStyle.Render(fmt.Sprintf("%d deny", p.DenyCount)))
+	}
+
+	if len(p.Tools) > 0 {
+		var tools []string
+		for t, c := range p.Tools {
+			tools = append(tools, fmt.Sprintf("%s:%d", t, c))
+		}
+		parts = append(parts, dimStyle.Render(strings.Join(tools, " ")))
+	}
+
+	parts = append(parts, dimStyle.Render(fmt.Sprintf("$%.4f", p.CostUSD)))
+
+	return previewBarStyle.Render("  " + strings.Join(parts, dimStyle.Render("  |  ")))
+}
+
+func (m model) renderListFooter() string {
+	return statusBarStyle.Render(" enter:inspect  /:filter  d:delete  o:cd  O:finder  r:refresh  esc:back  q:quit")
 }
 
 func (m model) renderDetail() string {
@@ -730,8 +987,8 @@ func (m model) renderInspect() string {
 
 	b.WriteString(section("WHEN", "Timing & Cost"))
 	b.WriteString(kv("Started", s.StartedAt.Format("2006-01-02 15:04:05")))
-	if m.cursor < len(m.sessions) {
-		b.WriteString(kv("Session Dir", dimStyle.Render(m.sessions[m.cursor].Dir)+" "+dimStyle.Render("(p to copy)")))
+	if cs := m.currentSession(); cs != nil {
+		b.WriteString(kv("Session Dir", dimStyle.Render(cs.Dir)+" "+dimStyle.Render("(p to copy)")))
 	}
 	if s.Metrics != nil {
 		costColor := greenStyle
@@ -871,7 +1128,6 @@ func (m model) renderAttestList() string {
 	var b strings.Builder
 	b.WriteString(subtitleStyle.Render(fmt.Sprintf("  %d attestations", len(m.attestations))) + "\n\n")
 
-	// Header
 	hdr := fmt.Sprintf("  %-4s  %-12s  %-8s  %6s  %-6s  %s", "#", "TOOL", "TIME", "SIZE", "RESULT", "SUBJECT")
 	b.WriteString(dimStyle.Render(hdr) + "\n")
 	lw := min(m.width-4, 100)
@@ -912,14 +1168,13 @@ func (m model) renderAttestList() string {
 	return b.String()
 }
 
-// ─── Attestation detail view (enter on attestation) ─
+// ─── Attestation detail view ────────────────────────
 
 func (m model) renderAttestDetail() string {
 	if m.attCursor >= len(m.attestations) {
 		return ""
 	}
 
-	// Tab bar
 	tabs := []string{" Structured ", " Decoded JSON ", " Raw Encoded "}
 	var tabBar strings.Builder
 	for i, t := range tabs {
@@ -948,7 +1203,6 @@ func (m model) renderAttestStructured(a AttestationInfo) string {
 	var b strings.Builder
 	sep := dimStyle.Render("  " + strings.Repeat("─", clampLineW(m.width)))
 
-	// ── DSSE Envelope ──
 	b.WriteString(section("ENVELOPE", "DSSE"))
 	b.WriteString(kv("File", dimStyle.Render(a.Filename)))
 	b.WriteString(kv("Path", dimStyle.Render(a.Path)+" "+dimStyle.Render("(p to copy)")))
@@ -966,7 +1220,6 @@ func (m model) renderAttestStructured(a AttestationInfo) string {
 		}
 	}
 
-	// ── in-toto Statement ──
 	if a.Statement != nil {
 		b.WriteString("\n" + sep + "\n")
 		b.WriteString(section("STATEMENT", "in-toto v1"))
@@ -980,7 +1233,6 @@ func (m model) renderAttestStructured(a AttestationInfo) string {
 		}
 	}
 
-	// ── Action Predicate ──
 	if a.Predicate != nil {
 		b.WriteString("\n" + sep + "\n")
 		b.WriteString(section("ACTION", "Predicate"))
@@ -994,7 +1246,6 @@ func (m model) renderAttestStructured(a AttestationInfo) string {
 		b.WriteString(kv("Action", a.Predicate.Action))
 		b.WriteString(kv("Timestamp", a.Predicate.Timestamp.Format("2006-01-02 15:04:05")))
 
-		// Tool input as key-value
 		if a.Predicate.ToolInput != nil {
 			var inputMap map[string]any
 			if json.Unmarshal(a.Predicate.ToolInput, &inputMap) == nil {
@@ -1004,7 +1255,6 @@ func (m model) renderAttestStructured(a AttestationInfo) string {
 			}
 		}
 
-		// Agent
 		if a.Predicate.AgentID != "" {
 			b.WriteString("\n" + sep + "\n")
 			b.WriteString(section("AGENT", "Identity"))
@@ -1023,7 +1273,6 @@ func (m model) renderAttestStructured(a AttestationInfo) string {
 			}
 		}
 
-		// Metrics
 		if a.Predicate.Metrics != nil {
 			b.WriteString("\n" + sep + "\n")
 			b.WriteString(section("METRICS", "Cumulative"))
@@ -1034,6 +1283,12 @@ func (m model) renderAttestStructured(a AttestationInfo) string {
 				}
 			}
 		}
+	}
+
+	if a.Predicate == nil && a.Decoded != "" {
+		b.WriteString("\n" + sep + "\n")
+		b.WriteString(section("", "Raw Decoded Payload"))
+		b.WriteString(colorizeJSON(a.Decoded))
 	}
 
 	return b.String()
@@ -1050,7 +1305,6 @@ func (m model) renderAttestEncoded(a AttestationInfo) string {
 	if a.RawJSON == "" {
 		return "  " + dimStyle.Render("No raw data")
 	}
-	// Pretty-print the raw DSSE envelope (it's already JSON, just re-indent)
 	var raw json.RawMessage
 	if json.Unmarshal([]byte(a.RawJSON), &raw) == nil {
 		pretty, _ := json.MarshalIndent(raw, "", "  ")
@@ -1108,7 +1362,6 @@ func clampLineW(width int) int {
 	return w
 }
 
-// colorizeJSON does simple syntax highlighting on pretty-printed JSON.
 func colorizeJSON(s string) string {
 	var b strings.Builder
 	for _, line := range strings.Split(s, "\n") {
