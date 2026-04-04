@@ -25,6 +25,28 @@ archives:
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
 
+# Cosign keyless signing (uses GitHub OIDC — no keys to manage)
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - "sign-blob"
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: all
+
+# SBOM generation with syft
+sboms:
+  - id: archive
+    cmd: syft
+    artifacts: archive
+    args: ["${artifact}", "--output", "spdx-json=${document}"]
+  - id: source
+    cmd: syft
+    artifacts: source
+    args: ["${artifact}", "--output", "spdx-json=${document}"]
+
 changelog:
   use: github
   groups:
@@ -43,6 +65,19 @@ release:
     ## aflock-tui {{ .Tag }}
 
     Terminal UI for inspecting aflock sessions, replaying Claude Code sessions against policies, and live-watching agent sessions.
+
+    All archives and checksums are signed with [Sigstore cosign](https://github.com/sigstore/cosign) (keyless, GitHub OIDC).
+    SBOMs are generated with [syft](https://github.com/anchore/syft) in SPDX format.
+
+    ### Verify a release
+
+    ```bash
+    cosign verify-blob \
+      --bundle aflock-tui_{{ .Version }}_darwin_arm64.tar.gz.sigstore.json \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --certificate-identity-regexp "github.com/aflock-ai/aflock-tui" \
+      aflock-tui_{{ .Version }}_darwin_arm64.tar.gz
+    ```
 
     ### Install
 
