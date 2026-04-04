@@ -24,14 +24,6 @@ a:hover { text-decoration: underline; }
 code { font-family: var(--mono); font-size: 0.88em; background: var(--surface2); padding: 0.15em 0.4em; border-radius: 4px; }
 pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; overflow-x: auto; font-family: var(--mono); font-size: 0.85rem; line-height: 1.6; margin: 1rem 0; position: relative; }
 pre code { background: none; padding: 0; }
-.copy-wrap { position: relative; }
-.copy-btn {
-  position: absolute; top: 0.5rem; right: 0.5rem; background: var(--surface2); border: 1px solid var(--border);
-  color: var(--dim); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.7rem; cursor: pointer;
-  font-family: var(--sans); transition: all 0.15s;
-}
-.copy-btn:hover { color: var(--text); border-color: var(--dim); }
-.copy-btn.copied { color: var(--green); border-color: var(--green); }
 .platform-btn {
   background: var(--surface); border: 1px solid var(--border); color: var(--dim);
   padding: 0.3rem 0.7rem; border-radius: 6px; font-size: 0.78rem; cursor: pointer;
@@ -139,11 +131,11 @@ pre code { background: none; padding: 0; }
     <a class="btn btn-outline" href="https://github.com/manzil-infinity180/aflock-tui">GitHub</a>
   </div>
   <div class="hero-install">
-    <div class="copy-wrap" style="display:inline-block;text-align:left;">
-      <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-      <pre><code>bash &lt;(curl -s https://raw.githubusercontent.com/manzil-infinity180/aflock-tui/main/install.sh)</code></pre>
-    </div>
+    <pre><code>bash &lt;(curl -s https://raw.githubusercontent.com/manzil-infinity180/aflock-tui/main/install.sh)</code></pre>
   </div>
+  <p style="margin-top:1.25rem;font-size:0.85rem;color:var(--dim);">
+    Part of the <a href="https://github.com/aflock-ai/aflock" style="color:var(--cyan);font-weight:600;">aflock</a> ecosystem &mdash; cryptographically signed policies for constrained AI agent execution
+  </p>
 </section>
 
 <section class="video-section">
@@ -194,20 +186,17 @@ pre code { background: none; padding: 0; }
     <div class="usage-card">
       <h3>Browse Sessions</h3>
       <p>Navigate sessions with <code>j/k</code>, press <code>Enter</code> to inspect, <code>Tab</code> to switch tabs, <code>a</code> for attestations, <code>t</code> for JWT.</p>
-      <div class="copy-wrap"><button class="copy-btn" onclick="copyCode(this)">Copy</button>
-      <pre><code>aflock-tui</code></pre></div>
+      <pre><code>aflock-tui</code></pre>
     </div>
     <div class="usage-card">
       <h3>Replay Validator</h3>
       <p>Replay a Claude session against a policy. Uses <code>aflock replay --format json</code> under the hood.</p>
-      <div class="copy-wrap"><button class="copy-btn" onclick="copyCode(this)">Copy</button>
-      <pre><code>aflock-tui replay session.jsonl .aflock</code></pre></div>
+      <pre><code>aflock-tui replay session.jsonl .aflock</code></pre>
     </div>
     <div class="usage-card">
       <h3>Live Watch</h3>
       <p>Auto-discovers the most recent Claude session and tails it live. Run in one terminal, Claude Code in another.</p>
-      <div class="copy-wrap"><button class="copy-btn" onclick="copyCode(this)">Copy</button>
-      <pre><code>aflock-tui watch --live .aflock</code></pre></div>
+      <pre><code>aflock-tui watch --live .aflock</code></pre>
     </div>
   </div>
 </section>
@@ -217,26 +206,17 @@ pre code { background: none; padding: 0; }
   <div class="install-methods">
     <div class="install-card">
       <h3>One-line install</h3>
-      <div class="copy-wrap">
-        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <pre><code>bash &lt;(curl -s https://raw.githubusercontent.com/manzil-infinity180/aflock-tui/main/install.sh)</code></pre>
-      </div>
+      <pre><code>bash &lt;(curl -s https://raw.githubusercontent.com/manzil-infinity180/aflock-tui/main/install.sh)</code></pre>
     </div>
     <div class="install-card">
       <h3>Go install</h3>
-      <div class="copy-wrap">
-        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <pre><code>go install github.com/manzil-infinity180/aflock-tui@latest</code></pre>
-      </div>
+      <pre><code>go install github.com/manzil-infinity180/aflock-tui@latest</code></pre>
     </div>
     <div class="install-card">
       <h3>Build from source</h3>
-      <div class="copy-wrap">
-        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <pre><code>git clone https://github.com/manzil-infinity180/aflock-tui.git
+      <pre><code>git clone https://github.com/manzil-infinity180/aflock-tui.git
 cd aflock-tui
 go build -o aflock-tui .</code></pre>
-      </div>
     </div>
   </div>
 </section>
@@ -250,14 +230,11 @@ go build -o aflock-tui .</code></pre>
     <button class="platform-btn" onclick="setPlatform('linux_amd64',this)">Linux (x64)</button>
     <button class="platform-btn" onclick="setPlatform('linux_arm64',this)">Linux (ARM)</button>
   </div>
-  <div class="copy-wrap" style="max-width:700px;margin:0 auto;text-align:left;">
-    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-    <pre><code id="verify-cmd">cosign verify-blob \
+  <pre style="max-width:700px;margin:0 auto;text-align:left;"><code id="verify-cmd">cosign verify-blob \
   --bundle aflock-tui_0.1.0_darwin_arm64.tar.gz.sigstore.json \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp "github.com/manzil-infinity180/aflock-tui" \
   aflock-tui_0.1.0_darwin_arm64.tar.gz</code></pre>
-  </div>
   <div class="badge-row">
     <span class="sec-badge"><span class="sec-dot green"></span> Cosign signed</span>
     <span class="sec-badge"><span class="sec-dot green"></span> SPDX SBOM</span>
@@ -295,16 +272,6 @@ go build -o aflock-tui .</code></pre>
 </footer>
 
 <script>
-function copyCode(btn) {
-  const pre = btn.parentElement.querySelector('pre code');
-  const text = pre.textContent;
-  navigator.clipboard.writeText(text).then(() => {
-    btn.textContent = 'Copied!';
-    btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
-  });
-}
-
 function setPlatform(platform, btn) {
   document.querySelectorAll('.platform-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
