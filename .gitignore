@@ -2,6 +2,9 @@
 aflock-tui
 aflock-tui.exe
 
+# GoReleaser
+dist/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,0 +1,63 @@
+project_name: aflock-tui
+
+builds:
+  - ldflags:
+      - "-s -w"
+      - "-X main.version={{.Version}}"
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    main: ./
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+
+changelog:
+  use: github
+  groups:
+    - title: Features
+      regexp: "^.*feat.*:+.*$"
+      order: 0
+    - title: Bug fixes
+      regexp: "^.*fix.*:+.*$"
+      order: 1
+    - title: Others
+      order: 999
+
+release:
+  prerelease: auto
+  header: |
+    ## aflock-tui {{ .Tag }}
+
+    Terminal UI for inspecting aflock sessions, replaying Claude Code sessions against policies, and live-watching agent sessions.
+
+    ### Install
+
+    ```bash
+    go install github.com/aflock-ai/aflock-tui@{{ .Tag }}
+    ```
+
+    Or download a binary below for your platform.
+
+    ### Usage
+
+    ```bash
+    aflock-tui                                    # browse sessions
+    aflock-tui replay session.jsonl policy.aflock  # replay validator
+    aflock-tui watch --live policy.aflock          # live watch
+    ```
+
+    Requires [aflock](https://github.com/aflock-ai/aflock) binary for replay/watch modes.
