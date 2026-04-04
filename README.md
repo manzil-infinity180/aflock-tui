@@ -4,6 +4,8 @@ Terminal UI for inspecting [aflock](https://github.com/aflock-ai/aflock) session
 
 Built with Go + [Bubbletea](https://github.com/charmbracelet/bubbletea).
 
+https://github.com/user-attachments/assets/c101b123-afb3-4bb5-840d-e201d6054836
+
 ## Install
 
 ```bash
