@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -406,23 +407,47 @@ func (m replayModel) renderActionDetail() string {
 
 	res := m.report.Results[m.cursor]
 	var b strings.Builder
-	sep := dimStyle.Render("  " + strings.Repeat("─", clampLineW(m.width)))
+	lw := clampLineW(m.width)
+	sep := dimStyle.Render("  " + strings.Repeat("─", lw))
 
-	// Decision
+	// Decision banner
 	b.WriteString(section("DECISION", ""))
 	switch res.Decision {
 	case "ALLOW":
-		b.WriteString(kv("Result", greenStyle.Render("  ALLOW  ")))
+		b.WriteString(kv("Result", greenStyle.Render("  ✓ ALLOW  ")))
+		b.WriteString(kv("Reason", dimStyle.Render("Allowed by policy")))
 	case "DENY":
-		b.WriteString(kv("Result", redStyle.Render("  DENY   ")))
+		b.WriteString(kv("Result", redStyle.Render("  ✗ DENY   ")))
 		if res.Reason != "" {
 			reason := strings.TrimPrefix(res.Reason, "[aflock] BLOCKED: ")
 			b.WriteString(kv("Reason", redStyle.Render(reason)))
+
+			// Try to extract which policy section matched
+			ruleSection := ""
+			if strings.Contains(reason, "files.deny") || strings.Contains(reason, "files.allow") || strings.Contains(reason, "read-only") || strings.Contains(reason, "readOnly") {
+				ruleSection = "files"
+			} else if strings.Contains(reason, "tools.deny") || strings.Contains(reason, "tools.allow") || strings.Contains(reason, "not in tools") {
+				ruleSection = "tools"
+			} else if strings.Contains(reason, "domain") || strings.Contains(reason, "domains") {
+				ruleSection = "domains"
+			} else if strings.Contains(reason, "approval") || strings.Contains(reason, "requireApproval") {
+				ruleSection = "tools.requireApproval"
+			}
+			if ruleSection != "" {
+				b.WriteString(kv("Matched", yellowStyle.Render(ruleSection)))
+			}
 		}
 	case "ASK":
-		b.WriteString(kv("Result", yellowStyle.Render("  ASK    ")))
+		b.WriteString(kv("Result", yellowStyle.Render("  ? ASK    ")))
 		if res.Reason != "" {
-			b.WriteString(kv("Reason", yellowStyle.Render(res.Reason)))
+			reason := strings.TrimPrefix(res.Reason, "[aflock] ")
+			b.WriteString(kv("Reason", yellowStyle.Render(reason)))
+			b.WriteString(kv("Matched", yellowStyle.Render("tools.requireApproval")))
+		}
+	case "ERROR":
+		b.WriteString(kv("Result", redStyle.Render("  ! ERROR  ")))
+		if res.Reason != "" {
+			b.WriteString(kv("Error", redStyle.Render(res.Reason)))
 		}
 	}
 
@@ -431,21 +456,66 @@ func (m replayModel) renderActionDetail() string {
 	b.WriteString(section("ACTION", "Tool Call"))
 	b.WriteString(kv("Tool", cyanStyle.Render(res.Action.Tool)))
 	b.WriteString(kv("ID", dimStyle.Render(res.Action.ID)))
+	b.WriteString(kv("Index", dimStyle.Render(fmt.Sprintf("%d of %d", res.Action.Index, len(m.report.Results)))))
 
-	// Input fields
-	for k, v := range res.Action.Input {
-		val := fmt.Sprintf("%v", v)
-		if len(val) > 80 {
-			val = val[:80] + "..."
+	// Input fields — show important ones first
+	filePath, _ := res.Action.Input["file_path"].(string)
+	command, _ := res.Action.Input["command"].(string)
+	pattern, _ := res.Action.Input["pattern"].(string)
+	url, _ := res.Action.Input["url"].(string)
+
+	if filePath != "" {
+		// Show both full and relative path
+		policyDir := filepath.Dir(m.report.PolicyPath)
+		relPath := filePath
+		if absDir, err := filepath.Abs(policyDir); err == nil {
+			relPath = strings.TrimPrefix(filePath, absDir+"/")
 		}
-		b.WriteString(kv("  "+k, jsonStrStyle.Render(val)))
+		b.WriteString(kv("File", cyanStyle.Render(relPath)))
+		if relPath != filePath {
+			b.WriteString(kv("Full Path", dimStyle.Render(filePath)))
+		}
 	}
+	if command != "" {
+		display := command
+		if len(display) > 120 {
+			display = display[:120] + "..."
+		}
+		b.WriteString(kv("Command", jsonStrStyle.Render(display)))
+	}
+	if pattern != "" {
+		b.WriteString(kv("Pattern", jsonStrStyle.Render(pattern)))
+	}
+	if url != "" {
+		b.WriteString(kv("URL", jsonStrStyle.Render(url)))
+	}
+
+	// Other input fields
+	for k, v := range res.Action.Input {
+		if k == "file_path" || k == "command" || k == "pattern" || k == "url" {
+			continue
+		}
+		val := fmt.Sprintf("%v", v)
+		if len(val) > 100 {
+			val = val[:100] + "..."
+		}
+		b.WriteString(kv("  "+k, dimStyle.Render(val)))
+	}
+
+	// Full input JSON (collapsible-ish, always shown but dimmed)
+	b.WriteString("\n" + sep + "\n")
+	b.WriteString(section("RAW INPUT", "JSON"))
+	inputJSON, _ := json.MarshalIndent(res.Action.Input, "  ", "  ")
+	b.WriteString("  " + dimStyle.Render(string(inputJSON)) + "\n")
 
 	// Policy context
 	b.WriteString("\n" + sep + "\n")
 	b.WriteString(section("POLICY", "Context"))
 	b.WriteString(kv("Policy", subtitleStyle.Render(m.report.PolicyName)))
 	b.WriteString(kv("Path", dimStyle.Render(m.report.PolicyPath)))
+	b.WriteString(kv("Model", cyanStyle.Render(m.report.Session.Model)))
+	b.WriteString(kv("Session", dimStyle.Render(fmt.Sprintf("%d turns, %d calls",
+		m.report.Session.Turns, m.report.Session.ToolCalls))))
 
 	return b.String()
 }
@@ -500,9 +570,59 @@ func (m replayModel) renderSummaryDashboard() string {
 	}
 
 	var b strings.Builder
-	sep := dimStyle.Render("  " + strings.Repeat("─", clampLineW(m.width)))
+	lw := clampLineW(m.width)
+	sep := dimStyle.Render("  " + strings.Repeat("─", lw))
+
+	// Verdict banner
+	verdict := greenStyle.Render("  ✓ PASS  ")
+	if r.DenyCount > 0 {
+		verdict = redStyle.Render(fmt.Sprintf("  ✗ FAIL — %d violation(s)  ", r.DenyCount))
+	}
+	b.WriteString("\n  " + verdict + "\n\n")
+
+	// Stats row
+	b.WriteString(fmt.Sprintf("  %s %s    %s %s    %s %s    %s %s\n\n",
+		dimStyle.Render("Total:"),
+		cyanStyle.Render(fmt.Sprintf("%d", len(r.Results))),
+		greenStyle.Render("Allow:"),
+		greenStyle.Render(fmt.Sprintf("%d", r.AllowCount)),
+		redStyle.Render("Deny:"),
+		redStyle.Render(fmt.Sprintf("%d", r.DenyCount)),
+		yellowStyle.Render("Ask:"),
+		yellowStyle.Render(fmt.Sprintf("%d", r.AskCount))))
+
+	// Decision timeline (wider blocks, numbered)
+	b.WriteString(sep + "\n")
+	b.WriteString(section("DECISION TIMELINE", ""))
+	b.WriteString("  ")
+
+	maxTimelineWidth := lw
+	count := 0
+	for _, res := range r.Results {
+		if count >= maxTimelineWidth {
+			break
+		}
+		// Use 2 chars per action for better visibility
+		switch res.Decision {
+		case "ALLOW":
+			b.WriteString(greenStyle.Render("\u2588\u2588"))
+		case "DENY":
+			b.WriteString(redStyle.Render("\u2588\u2588"))
+		case "ASK":
+			b.WriteString(yellowStyle.Render("\u2588\u2588"))
+		default:
+			b.WriteString(dimStyle.Render("\u2588\u2588"))
+		}
+		count += 2
+	}
+	b.WriteString("\n")
+	b.WriteString("  " +
+		greenStyle.Render("\u2588\u2588") + " allow  " +
+		redStyle.Render("\u2588\u2588") + " deny  " +
+		yellowStyle.Render("\u2588\u2588") + " ask\n")
 
 	// Tool breakdown
+	b.WriteString("\n" + sep + "\n")
 	b.WriteString(section("TOOL BREAKDOWN", ""))
 
 	type toolStats struct {
@@ -540,66 +660,77 @@ func (m replayModel) renderSummaryDashboard() string {
 		return tools[i].total > tools[j].total
 	})
 
-	hdr := fmt.Sprintf("  %-14s  %-6s  %-6s  %-6s  %s", "TOOL", "ALLOW", "DENY", "ASK", "TOTAL")
+	hdr := fmt.Sprintf("  %-14s  %-8s  %-8s  %-8s  %-6s  %s", "TOOL", "ALLOW", "DENY", "ASK", "TOTAL", "")
 	b.WriteString(dimStyle.Render(hdr) + "\n")
-	lw := clampLineW(m.width)
 	b.WriteString(dimStyle.Render("  "+strings.Repeat("─", lw)) + "\n")
 
 	for _, ts := range tools {
-		line := fmt.Sprintf("  %-14s  %s  %s  %s  %s",
+		// Mini bar for this tool
+		bar := ""
+		for i := 0; i < ts.allow; i++ {
+			bar += greenStyle.Render("\u2588")
+		}
+		for i := 0; i < ts.deny; i++ {
+			bar += redStyle.Render("\u2588")
+		}
+		for i := 0; i < ts.ask; i++ {
+			bar += yellowStyle.Render("\u2588")
+		}
+
+		line := fmt.Sprintf("  %-14s  %s  %s  %s  %s  %s",
 			cyanStyle.Render(ts.name),
-			greenStyle.Render(fmt.Sprintf("%-6d", ts.allow)),
-			redStyle.Render(fmt.Sprintf("%-6d", ts.deny)),
-			yellowStyle.Render(fmt.Sprintf("%-6d", ts.ask)),
-			dimStyle.Render(fmt.Sprintf("%d", ts.total)))
+			greenStyle.Render(fmt.Sprintf("%-8d", ts.allow)),
+			redStyle.Render(fmt.Sprintf("%-8d", ts.deny)),
+			yellowStyle.Render(fmt.Sprintf("%-8d", ts.ask)),
+			dimStyle.Render(fmt.Sprintf("%-6d", ts.total)),
+			bar)
 		b.WriteString(line + "\n")
 	}
-
-	// Decision timeline
-	b.WriteString("\n" + sep + "\n")
-	b.WriteString(section("DECISION TIMELINE", ""))
-	b.WriteString("  ")
-
-	maxTimelineWidth := clampLineW(m.width)
-	count := 0
-	for _, res := range r.Results {
-		if count >= maxTimelineWidth {
-			break
-		}
-		switch res.Decision {
-		case "ALLOW":
-			b.WriteString(greenStyle.Render("\u2588"))
-		case "DENY":
-			b.WriteString(redStyle.Render("\u2588"))
-		case "ASK":
-			b.WriteString(yellowStyle.Render("\u2588"))
-		default:
-			b.WriteString(dimStyle.Render("\u2588"))
-		}
-		count++
-	}
-	b.WriteString("\n")
-	b.WriteString("  " + dimStyle.Render(
-		greenStyle.Render("\u2588")+" allow  "+
-			redStyle.Render("\u2588")+" deny  "+
-			yellowStyle.Render("\u2588")+" ask") + "\n")
 
 	// Denied actions
 	if r.DenyCount > 0 {
 		b.WriteString("\n" + sep + "\n")
-		b.WriteString(section("DENIED ACTIONS", ""))
+		b.WriteString(section("DENIED ACTIONS", fmt.Sprintf("%d violations", r.DenyCount)))
 
 		for _, res := range r.Results {
 			if res.Decision != "DENY" {
 				continue
 			}
 			reason := strings.TrimPrefix(res.Reason, "[aflock] BLOCKED: ")
-			b.WriteString(fmt.Sprintf("  %s  %s  %s\n",
+			b.WriteString(fmt.Sprintf("  %s  %-12s  %s\n",
 				redStyle.Render(fmt.Sprintf("#%-3d", res.Action.Index)),
 				cyanStyle.Render(res.Action.Tool),
 				redStyle.Render(reason)))
 		}
 	}
+
+	// Ask actions
+	if r.AskCount > 0 {
+		b.WriteString("\n" + sep + "\n")
+		b.WriteString(section("REQUIRE APPROVAL", fmt.Sprintf("%d actions", r.AskCount)))
+
+		for _, res := range r.Results {
+			if res.Decision != "ASK" {
+				continue
+			}
+			reason := strings.TrimPrefix(res.Reason, "[aflock] ")
+			b.WriteString(fmt.Sprintf("  %s  %-12s  %s\n",
+				yellowStyle.Render(fmt.Sprintf("#%-3d", res.Action.Index)),
+				cyanStyle.Render(res.Action.Tool),
+				yellowStyle.Render(reason)))
+		}
+	}
+
+	// Session info
+	b.WriteString("\n" + sep + "\n")
+	b.WriteString(section("SESSION", "Info"))
+	b.WriteString(kv("Model", cyanStyle.Render(r.Session.Model)))
+	b.WriteString(kv("Turns", fmt.Sprintf("%d", r.Session.Turns)))
+	b.WriteString(kv("Tool Calls", fmt.Sprintf("%d", r.Session.ToolCalls)))
+	b.WriteString(kv("Tokens", fmt.Sprintf("in: %s  out: %s",
+		dimStyle.Render(fmt.Sprintf("%d", r.Session.TokensIn)),
+		dimStyle.Render(fmt.Sprintf("%d", r.Session.TokensOut)))))
+	b.WriteString(kv("Policy", subtitleStyle.Render(r.PolicyName)))
 
 	return b.String()
 }

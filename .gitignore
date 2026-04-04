@@ -1,3 +1,13 @@
+# Binary
 aflock-tui
+aflock-tui.exe
+
+# OS
 .DS_Store
-aflock-tui
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
