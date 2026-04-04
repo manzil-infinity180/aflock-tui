@@ -75,14 +75,14 @@ release:
     cosign verify-blob \
       --bundle aflock-tui_{{ .Version }}_darwin_arm64.tar.gz.sigstore.json \
       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-      --certificate-identity-regexp "github.com/aflock-ai/aflock-tui" \
+      --certificate-identity-regexp "github.com/manzil-infinity180/aflock-tui" \
       aflock-tui_{{ .Version }}_darwin_arm64.tar.gz
     ```
 
     ### Install
 
     ```bash
-    go install github.com/aflock-ai/aflock-tui@{{ .Tag }}
+    go install github.com/manzil-infinity180/aflock-tui@{{ .Tag }}
     ```
 
     Or download a binary below for your platform.
