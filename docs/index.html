@@ -22,8 +22,23 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); line
 a { color: var(--blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code { font-family: var(--mono); font-size: 0.88em; background: var(--surface2); padding: 0.15em 0.4em; border-radius: 4px; }
-pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; overflow-x: auto; font-family: var(--mono); font-size: 0.85rem; line-height: 1.6; margin: 1rem 0; }
+pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; overflow-x: auto; font-family: var(--mono); font-size: 0.85rem; line-height: 1.6; margin: 1rem 0; position: relative; }
 pre code { background: none; padding: 0; }
+.copy-wrap { position: relative; }
+.copy-btn {
+  position: absolute; top: 0.5rem; right: 0.5rem; background: var(--surface2); border: 1px solid var(--border);
+  color: var(--dim); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.7rem; cursor: pointer;
+  font-family: var(--sans); transition: all 0.15s;
+}
+.copy-btn:hover { color: var(--text); border-color: var(--dim); }
+.copy-btn.copied { color: var(--green); border-color: var(--green); }
+.platform-btn {
+  background: var(--surface); border: 1px solid var(--border); color: var(--dim);
+  padding: 0.3rem 0.7rem; border-radius: 6px; font-size: 0.78rem; cursor: pointer;
+  font-family: var(--sans); transition: all 0.15s;
+}
+.platform-btn:hover { color: var(--text); border-color: var(--dim); }
+.platform-btn.active { color: var(--cyan); border-color: var(--cyan); background: rgba(57,210,192,0.08); }
 
 /* Nav */
 .nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.75rem 0; position: sticky; top: 0; z-index: 10; }
@@ -124,7 +139,10 @@ pre code { background: none; padding: 0; }
     <a class="btn btn-outline" href="https://github.com/manzil-infinity180/aflock-tui">GitHub</a>
   </div>
   <div class="hero-install">
-    <pre><code>bash &lt;(curl -s https://raw.githubusercontent.com/manzil-infinity180/aflock-tui/main/install.sh)</code></pre>
+    <div class="copy-wrap" style="display:inline-block;text-align:left;">
+      <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      <pre><code>bash &lt;(curl -s https://raw.githubusercontent.com/manzil-infinity180/aflock-tui/main/install.sh)</code></pre>
+    </div>
   </div>
 </section>
 
@@ -176,17 +194,20 @@ pre code { background: none; padding: 0; }
     <div class="usage-card">
       <h3>Browse Sessions</h3>
       <p>Navigate sessions with <code>j/k</code>, press <code>Enter</code> to inspect, <code>Tab</code> to switch tabs, <code>a</code> for attestations, <code>t</code> for JWT.</p>
-      <pre><code>aflock-tui</code></pre>
+      <div class="copy-wrap"><button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      <pre><code>aflock-tui</code></pre></div>
     </div>
     <div class="usage-card">
       <h3>Replay Validator</h3>
       <p>Replay a Claude session against a policy. Uses <code>aflock replay --format json</code> under the hood.</p>
-      <pre><code>aflock-tui replay session.jsonl .aflock</code></pre>
+      <div class="copy-wrap"><button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      <pre><code>aflock-tui replay session.jsonl .aflock</code></pre></div>
     </div>
     <div class="usage-card">
       <h3>Live Watch</h3>
       <p>Auto-discovers the most recent Claude session and tails it live. Run in one terminal, Claude Code in another.</p>
-      <pre><code>aflock-tui watch --live .aflock</code></pre>
+      <div class="copy-wrap"><button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      <pre><code>aflock-tui watch --live .aflock</code></pre></div>
     </div>
   </div>
 </section>
@@ -196,29 +217,47 @@ pre code { background: none; padding: 0; }
   <div class="install-methods">
     <div class="install-card">
       <h3>One-line install</h3>
-      <pre><code>bash &lt;(curl -s https://raw.githubusercontent.com/manzil-infinity180/aflock-tui/main/install.sh)</code></pre>
+      <div class="copy-wrap">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><code>bash &lt;(curl -s https://raw.githubusercontent.com/manzil-infinity180/aflock-tui/main/install.sh)</code></pre>
+      </div>
     </div>
     <div class="install-card">
       <h3>Go install</h3>
-      <pre><code>go install github.com/manzil-infinity180/aflock-tui@latest</code></pre>
+      <div class="copy-wrap">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><code>go install github.com/manzil-infinity180/aflock-tui@latest</code></pre>
+      </div>
     </div>
     <div class="install-card">
       <h3>Build from source</h3>
-      <pre><code>git clone https://github.com/manzil-infinity180/aflock-tui.git
+      <div class="copy-wrap">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><code>git clone https://github.com/manzil-infinity180/aflock-tui.git
 cd aflock-tui
 go build -o aflock-tui .</code></pre>
+      </div>
     </div>
   </div>
 </section>
 
 <section class="security">
   <h2>Supply Chain Security</h2>
-  <p>Every release is signed with Sigstore cosign (keyless, GitHub OIDC) and includes SPDX SBOMs generated by syft.</p>
-  <pre><code>cosign verify-blob \
+  <p>Every release is signed with Sigstore cosign (keyless, GitHub OIDC) and includes SPDX SBOMs generated by syft. Select your platform to get the verify command:</p>
+  <div style="display:flex;gap:0.5rem;justify-content:center;margin-bottom:0.75rem;flex-wrap:wrap;">
+    <button class="platform-btn active" onclick="setPlatform('darwin_arm64',this)">macOS (Apple Silicon)</button>
+    <button class="platform-btn" onclick="setPlatform('darwin_amd64',this)">macOS (Intel)</button>
+    <button class="platform-btn" onclick="setPlatform('linux_amd64',this)">Linux (x64)</button>
+    <button class="platform-btn" onclick="setPlatform('linux_arm64',this)">Linux (ARM)</button>
+  </div>
+  <div class="copy-wrap" style="max-width:700px;margin:0 auto;text-align:left;">
+    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+    <pre><code id="verify-cmd">cosign verify-blob \
   --bundle aflock-tui_0.1.0_darwin_arm64.tar.gz.sigstore.json \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp "github.com/manzil-infinity180/aflock-tui" \
   aflock-tui_0.1.0_darwin_arm64.tar.gz</code></pre>
+  </div>
   <div class="badge-row">
     <span class="sec-badge"><span class="sec-dot green"></span> Cosign signed</span>
     <span class="sec-badge"><span class="sec-dot green"></span> SPDX SBOM</span>
@@ -255,5 +294,30 @@ go build -o aflock-tui .</code></pre>
   <div>Built with Go + <a href="https://github.com/charmbracelet/bubbletea">Bubbletea</a></div>
 </footer>
 
+<script>
+function copyCode(btn) {
+  const pre = btn.parentElement.querySelector('pre code');
+  const text = pre.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+function setPlatform(platform, btn) {
+  document.querySelectorAll('.platform-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const ver = '0.1.0';
+  const ext = platform.startsWith('windows') ? 'zip' : 'tar.gz';
+  const file = 'aflock-tui_' + ver + '_' + platform + '.' + ext;
+  document.getElementById('verify-cmd').textContent =
+    'cosign verify-blob \\\n' +
+    '  --bundle ' + file + '.sigstore.json \\\n' +
+    '  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\\n' +
+    '  --certificate-identity-regexp "github.com/manzil-infinity180/aflock-tui" \\\n' +
+    '  ' + file;
+}
+</script>
 </body>
 </html>
