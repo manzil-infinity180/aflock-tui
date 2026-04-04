@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>aflock-tui — Terminal UI for AI Agent Security</title>
+<meta name="description" content="Browse aflock sessions, decode attestations, replay Claude Code sessions against policies, and live-watch agent sessions. Built with Go + Bubbletea.">
+<meta property="og:title" content="aflock-tui">
+<meta property="og:description" content="Terminal UI for inspecting aflock sessions, replaying Claude Code sessions against policies, and live-watching agent sessions.">
+<meta property="og:type" content="website">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0d1117; --surface: #161b22; --surface2: #1c2129; --border: #30363d;
+  --text: #e6edf3; --dim: #7d8590; --green: #3fb950; --red: #f85149;
+  --cyan: #39d2c0; --blue: #58a6ff; --purple: #7B61FF;
+  --mono: 'SF Mono','Menlo','Consolas',monospace;
+  --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+}
+html { scroll-behavior: smooth; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); line-height: 1.6; }
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { font-family: var(--mono); font-size: 0.88em; background: var(--surface2); padding: 0.15em 0.4em; border-radius: 4px; }
+pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; overflow-x: auto; font-family: var(--mono); font-size: 0.85rem; line-height: 1.6; margin: 1rem 0; }
+pre code { background: none; padding: 0; }
+
+/* Nav */
+.nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.75rem 0; position: sticky; top: 0; z-index: 10; }
+.nav-inner { max-width: 900px; margin: 0 auto; padding: 0 2rem; display: flex; align-items: center; gap: 1.5rem; }
+.nav-logo { font-weight: 800; font-size: 1.05rem; color: var(--text); }
+.nav-logo span { color: var(--cyan); }
+.nav a { color: var(--dim); font-size: 0.85rem; }
+.nav a:hover { color: var(--text); text-decoration: none; }
+.nav-spacer { flex: 1; }
+.nav-btn { background: var(--cyan); color: var(--bg); padding: 0.35rem 0.9rem; border-radius: 6px; font-weight: 600; font-size: 0.82rem; }
+.nav-btn:hover { opacity: 0.85; text-decoration: none; }
+
+/* Hero */
+.hero { text-align: center; padding: 4rem 2rem 3rem; }
+.hero-title { font-size: 3rem; font-weight: 800; letter-spacing: -0.04em; line-height: 1.1; }
+.hero-title span { color: var(--cyan); }
+.hero-sub { color: var(--dim); font-size: 1.1rem; margin-top: 0.75rem; max-width: 550px; margin-left: auto; margin-right: auto; }
+.hero-actions { margin-top: 2rem; display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
+.btn { padding: 0.65rem 1.5rem; border-radius: 8px; font-weight: 600; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.4rem; }
+.btn-primary { background: var(--cyan); color: var(--bg); }
+.btn-primary:hover { opacity: 0.85; text-decoration: none; }
+.btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+.btn-outline:hover { border-color: var(--dim); text-decoration: none; }
+.hero-install { margin-top: 1.5rem; }
+.hero-install pre { display: inline-block; text-align: left; font-size: 0.82rem; padding: 0.6rem 1.2rem; }
+
+/* Video */
+.video-section { max-width: 800px; margin: 0 auto 3rem; padding: 0 2rem; }
+.video-wrap { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); background: #000; }
+.video-wrap video { width: 100%; display: block; }
+.video-placeholder { padding: 3rem; text-align: center; color: var(--dim); }
+
+/* Features */
+.features { max-width: 900px; margin: 0 auto; padding: 0 2rem 3rem; }
+.features h2 { font-size: 1.8rem; font-weight: 800; text-align: center; margin-bottom: 2rem; letter-spacing: -0.03em; }
+.feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem; }
+.feature-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.5rem; }
+.feature-icon { font-size: 1.5rem; margin-bottom: 0.5rem; }
+.feature-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.4rem; }
+.feature-desc { color: var(--dim); font-size: 0.85rem; line-height: 1.5; }
+
+/* Usage */
+.usage { max-width: 900px; margin: 0 auto; padding: 0 2rem 3rem; }
+.usage h2 { font-size: 1.8rem; font-weight: 800; text-align: center; margin-bottom: 1.5rem; }
+.usage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }
+.usage-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; }
+.usage-card h3 { font-size: 0.95rem; font-weight: 700; margin-bottom: 0.5rem; color: var(--cyan); }
+.usage-card p { font-size: 0.83rem; color: var(--dim); margin-bottom: 0.75rem; }
+.usage-card pre { margin: 0; font-size: 0.78rem; }
+
+/* Install */
+.install { max-width: 900px; margin: 0 auto; padding: 0 2rem 3rem; }
+.install h2 { font-size: 1.8rem; font-weight: 800; text-align: center; margin-bottom: 1.5rem; }
+.install-methods { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }
+.install-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; }
+.install-card h3 { font-size: 0.9rem; font-weight: 700; margin-bottom: 0.75rem; }
+
+/* Security */
+.security { max-width: 900px; margin: 0 auto; padding: 0 2rem 3rem; text-align: center; }
+.security h2 { font-size: 1.8rem; font-weight: 800; margin-bottom: 1rem; }
+.security p { color: var(--dim); font-size: 0.9rem; max-width: 600px; margin: 0 auto 1rem; }
+.badge-row { display: flex; gap: 0.5rem; justify-content: center; flex-wrap: wrap; margin-top: 1rem; }
+.sec-badge { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 0.3rem 0.8rem; font-size: 0.75rem; color: var(--dim); display: flex; align-items: center; gap: 0.35rem; }
+.sec-dot { width: 6px; height: 6px; border-radius: 50%; }
+.sec-dot.green { background: var(--green); }
+.sec-dot.purple { background: var(--purple); }
+
+/* Footer */
+.footer { border-top: 1px solid var(--border); padding: 2rem; text-align: center; color: var(--dim); font-size: 0.8rem; }
+.footer a { color: var(--dim); }
+.footer a:hover { color: var(--text); }
+.footer-links { display: flex; gap: 1.5rem; justify-content: center; margin-bottom: 0.75rem; }
+
+@media (max-width: 600px) {
+  .hero-title { font-size: 2rem; }
+  .feature-grid, .usage-grid, .install-methods { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <div class="nav-logo">aflock-<span>tui</span></div>
+    <a href="#features">Features</a>
+    <a href="#usage">Usage</a>
+    <a href="#install">Install</a>
+    <div class="nav-spacer"></div>
+    <a class="nav-btn" href="https://github.com/manzil-infinity180/aflock-tui/releases/latest">Download</a>
+  </div>
+</nav>
+
+<section class="hero">
+  <h1 class="hero-title">aflock-<span>tui</span></h1>
+  <p class="hero-sub">Terminal UI for inspecting aflock sessions, replaying Claude Code sessions against policies, and live-watching agent sessions.</p>
+  <div class="hero-actions">
+    <a class="btn btn-primary" href="https://github.com/manzil-infinity180/aflock-tui/releases/latest">Download Latest</a>
+    <a class="btn btn-outline" href="https://github.com/manzil-infinity180/aflock-tui">GitHub</a>
+  </div>
+  <div class="hero-install">
+    <pre><code>bash &lt;(curl -s https://raw.githubusercontent.com/manzil-infinity180/aflock-tui/main/install.sh)</code></pre>
+  </div>
+</section>
+
+<section class="video-section">
+  <div class="video-wrap" style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;">
+    <iframe src="https://www.youtube.com/embed/mPBQ_-tzfUs" title="aflock-tui demo" frameborder="0" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <h2>Features</h2>
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="feature-icon">&#128269;</div>
+      <div class="feature-title">Session Browser</div>
+      <div class="feature-desc">Browse all aflock sessions. Inspect metrics, agent identity, tool calls, cost, and token usage at a glance.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128274;</div>
+      <div class="feature-title">Attestation Decoder</div>
+      <div class="feature-desc">Decode DSSE envelopes, view in-toto statements, inspect raw payloads. Three views: structured, decoded, raw.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128273;</div>
+      <div class="feature-title">JWT Viewer</div>
+      <div class="feature-desc">Decode JWT auth tokens — header, claims, SPIFFE ID, agent identity hash, expiry.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#9654;</div>
+      <div class="feature-title">Replay Validator</div>
+      <div class="feature-desc">Replay recorded Claude sessions against any aflock policy. See ALLOW/DENY/ASK per action with matched rules.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128200;</div>
+      <div class="feature-title">Summary Dashboard</div>
+      <div class="feature-desc">Tool breakdown, decision timeline, deny/ask lists. Press <code>s</code> in replay mode.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128308;</div>
+      <div class="feature-title">Live Watch</div>
+      <div class="feature-desc">Live-tail a Claude session as the agent runs. See policy decisions appear in real-time with <code>--live</code> auto-discovery.</div>
+    </div>
+  </div>
+</section>
+
+<section class="usage" id="usage">
+  <h2>Usage</h2>
+  <div class="usage-grid">
+    <div class="usage-card">
+      <h3>Browse Sessions</h3>
+      <p>Navigate sessions with <code>j/k</code>, press <code>Enter</code> to inspect, <code>Tab</code> to switch tabs, <code>a</code> for attestations, <code>t</code> for JWT.</p>
+      <pre><code>aflock-tui</code></pre>
+    </div>
+    <div class="usage-card">
+      <h3>Replay Validator</h3>
+      <p>Replay a Claude session against a policy. Uses <code>aflock replay --format json</code> under the hood.</p>
+      <pre><code>aflock-tui replay session.jsonl .aflock</code></pre>
+    </div>
+    <div class="usage-card">
+      <h3>Live Watch</h3>
+      <p>Auto-discovers the most recent Claude session and tails it live. Run in one terminal, Claude Code in another.</p>
+      <pre><code>aflock-tui watch --live .aflock</code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="install" id="install">
+  <h2>Install</h2>
+  <div class="install-methods">
+    <div class="install-card">
+      <h3>One-line install</h3>
+      <pre><code>bash &lt;(curl -s https://raw.githubusercontent.com/manzil-infinity180/aflock-tui/main/install.sh)</code></pre>
+    </div>
+    <div class="install-card">
+      <h3>Go install</h3>
+      <pre><code>go install github.com/manzil-infinity180/aflock-tui@latest</code></pre>
+    </div>
+    <div class="install-card">
+      <h3>Build from source</h3>
+      <pre><code>git clone https://github.com/manzil-infinity180/aflock-tui.git
+cd aflock-tui
+go build -o aflock-tui .</code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="security">
+  <h2>Supply Chain Security</h2>
+  <p>Every release is signed with Sigstore cosign (keyless, GitHub OIDC) and includes SPDX SBOMs generated by syft.</p>
+  <pre><code>cosign verify-blob \
+  --bundle aflock-tui_0.1.0_darwin_arm64.tar.gz.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp "github.com/manzil-infinity180/aflock-tui" \
+  aflock-tui_0.1.0_darwin_arm64.tar.gz</code></pre>
+  <div class="badge-row">
+    <span class="sec-badge"><span class="sec-dot green"></span> Cosign signed</span>
+    <span class="sec-badge"><span class="sec-dot green"></span> SPDX SBOM</span>
+    <span class="sec-badge"><span class="sec-dot green"></span> SHA256 checksums</span>
+    <span class="sec-badge"><span class="sec-dot purple"></span> GitHub OIDC</span>
+  </div>
+</section>
+
+<section class="features">
+  <h2>Related Projects</h2>
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="feature-title"><a href="https://github.com/aflock-ai/aflock">aflock</a></div>
+      <div class="feature-desc">Cryptographically signed policies for constrained AI agent execution. SPIFFE identity, in-toto attestations, Rego evaluators.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-title"><a href="https://github.com/manzil-infinity180/aflock-replay">aflock-replay</a></div>
+      <div class="feature-desc">Browser-based replay UI. Real aflock evaluator via WebAssembly, 100% client-side.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-title"><a href="https://github.com/in-toto/witness">witness</a></div>
+      <div class="feature-desc">Supply chain attestation framework by TestifySec. aflock's attestation model is inspired by witness.</div>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="footer-links">
+    <a href="https://github.com/manzil-infinity180/aflock-tui">GitHub</a>
+    <a href="https://github.com/manzil-infinity180/aflock-tui/releases">Releases</a>
+    <a href="https://github.com/aflock-ai/aflock">aflock</a>
+    <a href="https://manzil-infinity180.github.io/aflock-replay/">aflock-replay</a>
+  </div>
+  <div>Built with Go + <a href="https://github.com/charmbracelet/bubbletea">Bubbletea</a></div>
+</footer>
+
+</body>
+</html>
