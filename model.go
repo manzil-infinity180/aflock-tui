@@ -947,9 +947,19 @@ func (m model) renderInspect() string {
 
 	b.WriteString(section("WHO", "Agent Identity"))
 	if s.Identity != nil {
-		b.WriteString(kv("Model", cyanStyle.Render(s.Identity.Model)+" "+dimStyle.Render("@"+s.Identity.ModelVersion)))
-		b.WriteString(kv("Binary", s.Identity.BinaryName+" "+dimStyle.Render("@"+s.Identity.BinaryVersion)))
-		b.WriteString(kv("Env", s.Identity.Environment))
+		model := cyanStyle.Render(s.Identity.Model)
+		if s.Identity.ModelVersion != "" {
+			model += " " + dimStyle.Render("@"+s.Identity.ModelVersion)
+		}
+		b.WriteString(kv("Model", model))
+		binary := s.Identity.BinaryName
+		if s.Identity.BinaryVersion != "" {
+			binary += " " + dimStyle.Render("@"+s.Identity.BinaryVersion)
+		}
+		b.WriteString(kv("Binary", binary))
+		if s.Identity.Environment != "" {
+			b.WriteString(kv("Env", s.Identity.Environment))
+		}
 		b.WriteString(kv("Hash", dimStyle.Render(truncate(s.Identity.IdentityHash, 32)+"...")))
 	} else if s.AuthToken != "" {
 		b.WriteString("  " + dimStyle.Render("identity embedded in JWT — press t to decode") + "\n")
