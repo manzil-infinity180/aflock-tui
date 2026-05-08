@@ -21,6 +21,7 @@ const (
 	viewAttest
 	viewAttestDetail
 	viewJWT
+	viewVerify
 )
 
 type detailTab int
@@ -68,6 +69,13 @@ type model struct {
 
 	// Delete confirmation
 	confirmDelete bool
+
+	// Verify view state — set when user presses `v` on the inspect view.
+	// runningVerify is true while `aflock verify` is executing async; the
+	// verifyOutput viewport shows a spinner-ish placeholder during that
+	// window and the result text once verifyResult comes back.
+	runningVerify bool
+	verifyOutput  string
 }
 
 func newModel() model {
@@ -154,6 +162,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.copied = ""
 		return m, nil
 
+	case verifyResult:
+		// Async result of `aflock verify --session <id>` launched by 'v'.
+		m.runningVerify = false
+		m.verifyOutput = msg.output
+		m.updateViewport()
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -232,7 +247,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.applyFilter()
 					return m, nil
 				}
-			case viewDetail, viewJWT:
+			case viewDetail, viewJWT, viewVerify:
 				m.view = viewList
 			case viewAttest:
 				m.view = viewDetail
@@ -308,6 +323,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.view == viewDetail && m.state != nil && m.state.AuthToken != "" {
 				m.view = viewJWT
 				m.updateViewport()
+			}
+			return m, nil
+
+		case "v":
+			// Run `aflock verify --session <id>` async + show result.
+			// Triggered from the inspect view; the verify view shows a
+			// "running…" placeholder until the verifyResult msg comes back.
+			if m.view == viewDetail && m.state != nil {
+				sessionDir := ""
+				if s := m.currentSession(); s != nil {
+					sessionDir = s.Dir
+				}
+				m.view = viewVerify
+				m.runningVerify = true
+				m.verifyOutput = "running aflock verify…"
+				m.updateViewport()
+				return m, runVerifyCmd(m.state.SessionID, sessionDir)
 			}
 			return m, nil
 
@@ -608,9 +640,47 @@ func (m *model) updateViewport() {
 		content = m.renderAttestDetail()
 	case viewJWT:
 		content = m.renderJWT()
+	case viewVerify:
+		content = m.renderVerify()
 	}
 	m.viewport.SetContent(content)
 	m.viewport.GotoTop()
+}
+
+// renderVerify draws the output of `aflock verify --session <id>` plus
+// the signing-identity banner. While the verify command is still running,
+// shows a placeholder.
+func (m model) renderVerify() string {
+	var b strings.Builder
+	b.WriteString(section("VERIFY", "6-phase pipeline"))
+	if m.runningVerify {
+		b.WriteString("  " + dimStyle.Render("running aflock verify…") + "\n")
+		return b.String()
+	}
+	if m.verifyOutput == "" {
+		b.WriteString("  " + dimStyle.Render("(no output)") + "\n")
+		return b.String()
+	}
+	// The verifyOutput already has section dividers and a summary —
+	// render it as-is in dim style for the body, with PASS/FAIL markers
+	// recolored.
+	for _, line := range strings.Split(m.verifyOutput, "\n") {
+		switch {
+		case strings.Contains(line, "✓"):
+			b.WriteString("  " + greenStyle.Render(line) + "\n")
+		case strings.Contains(line, "✗"):
+			b.WriteString("  " + redStyle.Render(line) + "\n")
+		case strings.Contains(line, "⚠"):
+			b.WriteString("  " + yellowStyle.Render(line) + "\n")
+		case strings.HasPrefix(line, "summary:"):
+			b.WriteString("  " + cyanStyle.Render(line) + "\n")
+		case strings.HasPrefix(line, "──"):
+			b.WriteString("  " + dimStyle.Render(line) + "\n")
+		default:
+			b.WriteString("  " + line + "\n")
+		}
+	}
+	return b.String()
 }
 
 // ─── Styles ─────────────────────────────────────────
@@ -947,9 +1017,19 @@ func (m model) renderInspect() string {
 
 	b.WriteString(section("WHO", "Agent Identity"))
 	if s.Identity != nil {
-		b.WriteString(kv("Model", cyanStyle.Render(s.Identity.Model)+" "+dimStyle.Render("@"+s.Identity.ModelVersion)))
-		b.WriteString(kv("Binary", s.Identity.BinaryName+" "+dimStyle.Render("@"+s.Identity.BinaryVersion)))
-		b.WriteString(kv("Env", s.Identity.Environment))
+		model := cyanStyle.Render(s.Identity.Model)
+		if s.Identity.ModelVersion != "" {
+			model += " " + dimStyle.Render("@"+s.Identity.ModelVersion)
+		}
+		b.WriteString(kv("Model", model))
+		binary := s.Identity.BinaryName
+		if s.Identity.BinaryVersion != "" {
+			binary += " " + dimStyle.Render("@"+s.Identity.BinaryVersion)
+		}
+		b.WriteString(kv("Binary", binary))
+		if s.Identity.Environment != "" {
+			b.WriteString(kv("Env", s.Identity.Environment))
+		}
 		b.WriteString(kv("Hash", dimStyle.Render(truncate(s.Identity.IdentityHash, 32)+"...")))
 	} else if s.AuthToken != "" {
 		b.WriteString("  " + dimStyle.Render("identity embedded in JWT — press t to decode") + "\n")
@@ -1015,6 +1095,7 @@ func (m model) renderInspect() string {
 	} else {
 		b.WriteString(kv("JWT", dimStyle.Render("none")))
 	}
+	b.WriteString(kv("Verify", dimStyle.Render("press v to run aflock verify")))
 
 	return b.String()
 }

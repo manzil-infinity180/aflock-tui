@@ -258,7 +258,168 @@ func loadSessionState(sessionDir string) (*SessionState, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, err
 	}
+	// MCP-path sessions don't write agent_identity_meta into state.json.
+	// Fall back in order: latest attestation's predicate.agentIdentity,
+	// then JWT body claims. This way the inspect view shows identity for
+	// any session that has signed evidence of it, even if claude only
+	// called get_token and never produced an attestation.
+	if state.Identity == nil {
+		if id := identityFromLatestAttestation(sessionDir); id != nil {
+			state.Identity = id
+		}
+	}
+	if state.Identity == nil && state.AuthToken != "" {
+		if id := identityFromJWT(state.AuthToken); id != nil {
+			state.Identity = id
+		}
+	}
 	return &state, nil
+}
+
+// jwtClaims captures the aflock-specific claims we surface in the inspect view.
+// Other claims (allowed_tools, limits, etc.) stay accessible via "press t".
+type jwtClaims struct {
+	Sub          string `json:"sub"`
+	AgentID      string `json:"agent_id"`
+	IdentityHash string `json:"identity_hash"`
+}
+
+// identityFromJWT parses the body of an unverified JWT and returns the
+// identity it asserts. We don't verify the signature here — the TUI is a
+// read-only viewer; the verifier is what actually trusts the token.
+//
+// The aflock JWT subject follows the SPIFFE convention:
+//
+//	spiffe://aflock.ai/agent/<model>/<model-version-dashed>/<short-hash>
+//
+// e.g. spiffe://aflock.ai/agent/claude-opus-4-7/4-7-0/b4d15ed93f404e8b
+//
+// We parse Model and ModelVersion out of that path so the inspect view
+// can render them the same way it would for an attestation-derived identity.
+func identityFromJWT(token string) *IdentityMeta {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil
+	}
+	body, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		// Some emitters pad with '='; try the padded variant.
+		body, err = base64.URLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return nil
+		}
+	}
+	var c jwtClaims
+	if err := json.Unmarshal(body, &c); err != nil {
+		return nil
+	}
+	if c.IdentityHash == "" && c.Sub == "" && c.AgentID == "" {
+		return nil
+	}
+
+	id := &IdentityMeta{IdentityHash: c.IdentityHash}
+
+	// Prefer sub, fall back to agent_id (they are the same in aflock today).
+	spiffeID := c.Sub
+	if spiffeID == "" {
+		spiffeID = c.AgentID
+	}
+	// Format: spiffe://aflock.ai/agent/<model>/<modelVersion>/<shortHash>
+	const prefix = "spiffe://aflock.ai/agent/"
+	if rest, ok := strings.CutPrefix(spiffeID, prefix); ok {
+		segs := strings.Split(rest, "/")
+		if len(segs) >= 1 {
+			id.Model = segs[0]
+		}
+		if len(segs) >= 2 {
+			// SPIFFE path segments can't contain '.', so aflock encodes
+			// "4.7.0" as "4-7-0". Reverse for display.
+			id.ModelVersion = strings.ReplaceAll(segs[1], "-", ".")
+		}
+	}
+	return id
+}
+
+// attestationAgentIdentity matches the on-wire predicate.agentIdentity shape
+// (camelCase, single binary path field, no separate binary_version).
+type attestationAgentIdentity struct {
+	Model        string `json:"model"`
+	ModelVersion string `json:"modelVersion"`
+	Binary       string `json:"binary"`
+	BinaryHash   string `json:"binaryHash"`
+	Environment  string `json:"environment"`
+	IdentityHash string `json:"identityHash"`
+}
+
+// identityFromLatestAttestation walks the session's attestations dir, picks
+// the most recently modified .intoto.json, decodes its DSSE payload, and
+// returns the agent identity carried in the predicate. Returns nil if no
+// attestations exist or none parse cleanly.
+func identityFromLatestAttestation(sessionDir string) *IdentityMeta {
+	attestDir := filepath.Join(sessionDir, "attestations")
+	entries, err := os.ReadDir(attestDir)
+	if err != nil {
+		return nil
+	}
+
+	var newestPath string
+	var newestMtime time.Time
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".intoto.json") {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if fi.ModTime().After(newestMtime) {
+			newestMtime = fi.ModTime()
+			newestPath = filepath.Join(attestDir, e.Name())
+		}
+	}
+	if newestPath == "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(newestPath)
+	if err != nil {
+		return nil
+	}
+
+	var envelope DSSEEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil
+	}
+	payloadBytes, err := base64.StdEncoding.DecodeString(envelope.Payload)
+	if err != nil {
+		return nil
+	}
+	var stmt InTotoStatement
+	if err := json.Unmarshal(payloadBytes, &stmt); err != nil {
+		return nil
+	}
+	var pred ActionPredicate
+	if err := json.Unmarshal(stmt.Predicate, &pred); err != nil {
+		return nil
+	}
+	if len(pred.AgentIdentity) == 0 {
+		return nil
+	}
+	var aid attestationAgentIdentity
+	if err := json.Unmarshal(pred.AgentIdentity, &aid); err != nil {
+		return nil
+	}
+	if aid.IdentityHash == "" && aid.Model == "" && aid.Binary == "" {
+		return nil
+	}
+	return &IdentityMeta{
+		Model:        aid.Model,
+		ModelVersion: aid.ModelVersion,
+		BinaryName:   aid.Binary,
+		BinaryDigest: aid.BinaryHash,
+		Environment:  aid.Environment,
+		IdentityHash: aid.IdentityHash,
+	}
 }
 
 func loadAttestations(sessionDir string) ([]AttestationInfo, error) {
